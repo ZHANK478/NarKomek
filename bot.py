@@ -60,7 +60,7 @@ async def ask_openrouter(user_message: str, history: list) -> str:
                 "Content-Type": "application/json",
             },
             json={
-                "model": "google/gemini-flash-1.5",
+                "model": "google/gemini-3.1-flash-lite",
                 "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
                 "max_tokens": 1000,
             }
