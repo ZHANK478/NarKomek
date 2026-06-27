@@ -5,14 +5,13 @@ import asyncio
 from datetime import time
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram.ext import JobQueue
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
-CHANNEL_ID = "@grants_kz_bot"
+CHANNEL_ID = os.environ.get("CHANNEL_ID", "")
 
 SYSTEM_PROMPT = """Ты — профессиональный бизнес-консультант в Казахстане. 
 Ты помогаешь ТОЛЬКО по следующим темам:
@@ -26,25 +25,23 @@ SYSTEM_PROMPT = """Ты — профессиональный бизнес-кон
 - Не вываливай всю информацию сразу
 - Если вопрос НЕ по этим темам — вежливо объясни специализацию
 - Отвечай на русском или казахском языке
-- Будь дружелюбным, как живой консультант
+- Ты НЕ ChatGPT и не GPT. Ты — консультант NarKomek, специалист по бизнесу в Казахстане
+- Будь дружелюбным, как живой консультант"""
 
-Стиль: живой, тёплый, не роботизированный."""
+GRANT_SEARCH_PROMPT = """Напиши пост для Telegram-канала про актуальные гранты и программы поддержки бизнеса в Казахстане.
 
-GRANT_SEARCH_PROMPT = """Найди актуальные гранты и программы поддержки бизнеса в Казахстане на сегодня.
+Формат поста (только текст, без звёздочек и решёток):
 
-Напиши пост для Telegram-канала в таком формате:
+ГРАНТЫ ДЛЯ БИЗНЕСА КАЗАХСТАН
 
-🇰🇿 ГРАНТЫ ДЛЯ БИЗНЕСА — [сегодняшняя дата]
+Напиши 2-3 актуальные программы. Для каждой:
+- Название программы
+- Что даёт (сумма, условия)
+- Куда обращаться
 
-Найди 2-3 актуальные программы и для каждой напиши:
-💰 Название программы
-📋 Кратко что даёт (сумма, условия)
-🔗 Куда обращаться (сайт или телефон)
+В конце: Вопросы? Пишите @NarKomek_bot
 
-В конце добавь:
-💬 Есть вопросы? Пишите нашему консультанту @NarKomek_bot
-
-Пост должен быть живым, полезным, не длиннее 30 строк."""
+Пиши простым текстом без markdown форматирования."""
 
 WELCOME_MESSAGE = """👋 Привет! Я консультант по бизнесу в Казахстане.
 
@@ -81,56 +78,46 @@ async def ask_openrouter(user_message: str, history: list, system: str = SYSTEM_
         data = response.json()
         return data["choices"][0]["message"]["content"]
 
-async def search_and_post_grants(bot):
-    """Ищет гранты и публикует в канал"""
+async def search_and_post_grants(bot, chat_id):
     logger.info("Searching for grants...")
     try:
         post_text = await ask_openrouter(
-            "Найди актуальные гранты для бизнеса в Казахстане сегодня и напиши пост.",
+            "Найди актуальные гранты для бизнеса в Казахстане и напиши пост.",
             [],
             GRANT_SEARCH_PROMPT
         )
-        await bot.send_message(
-            chat_id=CHANNEL_ID,
-            text=post_text,
-            parse_mode="Markdown"
-        )
-        logger.info("Grant post published!")
-        return post_text
+        # Публикуем в канал если настроен
+        if CHANNEL_ID:
+            await bot.send_message(chat_id=CHANNEL_ID, text=post_text)
+            logger.info("Posted to channel!")
+
+        # Отправляем также тебе в личку
+        await bot.send_message(chat_id=chat_id, text="✅ Пост опубликован в канале!\n\n" + post_text)
+        return True
     except Exception as e:
         logger.error(f"Error posting grants: {e}")
-        return None
+        await bot.send_message(chat_id=chat_id, text=f"❌ Ошибка: {e}")
+        return False
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history"] = []
-    await update.message.reply_text(
-        WELCOME_MESSAGE,
-        reply_markup=get_keyboard()
-    )
+    await update.message.reply_text(WELCOME_MESSAGE, reply_markup=get_keyboard())
 
 async def grant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /grant — вручную запустить публикацию"""
-    msg = await update.message.reply_text("🔍 Ищу актуальные гранты, подожди минуту...")
-    post = await search_and_post_grants(context.bot)
-    if post:
-        await msg.edit_text(f"✅ Пост опубликован в канале @grants_kz_bot!")
-    else:
-        await msg.edit_text("😔 Ошибка при публикации, попробуй ещё раз.")
+    msg = await update.message.reply_text("🔍 Ищу актуальные гранты, подожди...")
+    await search_and_post_grants(context.bot, update.effective_chat.id)
+    await msg.delete()
 
 async def daily_grant_job(context):
-    """Автоматическая публикация каждое утро"""
-    await search_and_post_grants(context.bot)
+    if CHANNEL_ID:
+        await search_and_post_grants(context.bot, CHANNEL_ID)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     history = context.user_data.get("history", [])
 
-    # Пауза для живости
     await asyncio.sleep(2)
-    await context.bot.send_chat_action(
-        chat_id=update.effective_chat.id,
-        action="typing"
-    )
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     await asyncio.sleep(2)
 
     try:
@@ -138,7 +125,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history.append({"role": "user", "content": user_message})
         history.append({"role": "assistant", "content": reply})
         context.user_data["history"] = history[-10:]
-        await update.message.reply_text(reply, parse_mode="Markdown")
+        await update.message.reply_text(reply)
     except Exception as e:
         logger.error(f"Error: {e}")
         await update.message.reply_text("😔 Ошибка, попробуй ещё раз.")
@@ -150,11 +137,10 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
-    # Расписание — каждое утро в 9:00 по Астане (UTC+5)
     job_queue = app.job_queue
     job_queue.run_daily(
         daily_grant_job,
-        time=time(hour=4, minute=0),  # 4:00 UTC = 9:00 Астана
+        time=time(hour=4, minute=0),
     )
 
     app.add_handler(CommandHandler("start", start))
@@ -162,7 +148,7 @@ def main():
     app.add_handler(CommandHandler("grant", grant_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Bot started with grant agent!")
+    logger.info("Bot started!")
     app.run_polling()
 
 if __name__ == "__main__":
