@@ -79,7 +79,7 @@ async def ask_openrouter(user_message: str, history: list, system: str = SYSTEM_
         return data["choices"][0]["message"]["content"]
 
 async def search_and_post_grants(bot, chat_id):
-    logger.info("Searching for grants...")
+    logger.info(f"Searching for grants... CHANNEL_ID={CHANNEL_ID}")
     try:
         post_text = await ask_openrouter(
             "Найди актуальные гранты для бизнеса в Казахстане и напиши пост.",
