@@ -78,48 +78,60 @@ async def ask_openrouter(user_message: str, history: list, system: str = SYSTEM_
         data = response.json()
         return data["choices"][0]["message"]["content"]
 
-async def search_and_post_grants(bot, chat_id):
-    logger.info(f"Searching for grants... CHANNEL_ID={CHANNEL_ID}")
+async def grant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    await update.message.reply_text("🔍 Ищу актуальные гранты, подожди...")
+    
+    logger.info(f"CHANNEL_ID value: '{CHANNEL_ID}'")
+    
     try:
         post_text = await ask_openrouter(
             "Найди актуальные гранты для бизнеса в Казахстане и напиши пост.",
             [],
             GRANT_SEARCH_PROMPT
         )
-        # Публикуем в канал если настроен
+        logger.info("Got text from OpenRouter, now posting...")
+        
         if CHANNEL_ID:
-            await bot.send_message(chat_id=CHANNEL_ID, text=post_text)
-            logger.info("Posted to channel!")
-
-        # Отправляем также тебе в личку
-        await bot.send_message(chat_id=chat_id, text="✅ Пост опубликован в канале!\n\n" + post_text)
-        return True
+            logger.info(f"Sending to channel: {CHANNEL_ID}")
+            try:
+                await context.bot.send_message(chat_id=CHANNEL_ID, text=post_text)
+                logger.info("SUCCESS: Posted to channel!")
+                await update.message.reply_text(f"✅ Пост опубликован в {CHANNEL_ID}!")
+            except Exception as channel_error:
+                logger.error(f"CHANNEL ERROR: {channel_error}")
+                await update.message.reply_text(f"❌ Ошибка публикации в канал: {channel_error}\n\nВот пост:\n\n{post_text}")
+        else:
+            logger.warning("CHANNEL_ID is empty!")
+            await update.message.reply_text(f"⚠️ CHANNEL_ID не настроен!\n\nВот пост:\n\n{post_text}")
+            
     except Exception as e:
-        logger.error(f"Error posting grants: {e}")
-        await bot.send_message(chat_id=chat_id, text=f"❌ Ошибка: {e}")
-        return False
+        logger.error(f"General error: {e}")
+        await update.message.reply_text(f"❌ Общая ошибка: {e}")
+
+async def daily_grant_job(context):
+    if CHANNEL_ID:
+        try:
+            post_text = await ask_openrouter(
+                "Найди актуальные гранты для бизнеса в Казахстане и напиши пост.",
+                [],
+                GRANT_SEARCH_PROMPT
+            )
+            await context.bot.send_message(chat_id=CHANNEL_ID, text=post_text)
+            logger.info("Daily grant post published!")
+        except Exception as e:
+            logger.error(f"Daily job error: {e}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["history"] = []
     await update.message.reply_text(WELCOME_MESSAGE, reply_markup=get_keyboard())
 
-async def grant_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    msg = await update.message.reply_text("🔍 Ищу актуальные гранты, подожди...")
-    await search_and_post_grants(context.bot, update.effective_chat.id)
-    await msg.delete()
-
-async def daily_grant_job(context):
-    if CHANNEL_ID:
-        await search_and_post_grants(context.bot, CHANNEL_ID)
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
     history = context.user_data.get("history", [])
-
     await asyncio.sleep(2)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     await asyncio.sleep(2)
-
     try:
         reply = await ask_openrouter(user_message, history)
         history.append({"role": "user", "content": user_message})
@@ -136,19 +148,13 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-
     job_queue = app.job_queue
-    job_queue.run_daily(
-        daily_grant_job,
-        time=time(hour=4, minute=0),
-    )
-
+    job_queue.run_daily(daily_grant_job, time=time(hour=4, minute=0))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CommandHandler("grant", grant_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    logger.info("Bot started!")
+    logger.info(f"Bot started! CHANNEL_ID={CHANNEL_ID}")
     app.run_polling()
 
 if __name__ == "__main__":
