@@ -170,6 +170,16 @@ async def evening_post(context):
 # КОМАНДЫ
 # ───────────────────────────────────────────
 
+async def manual_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /post — только для админа"""
+    if str(update.message.from_user.id) != ADMIN_CHAT_ID:
+        return
+
+    await update.message.reply_text("📤 Публикую пост...")
+    await morning_post(context)
+    await update.message.reply_text("✅ Готово! Проверь канал @armykz_news")
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "👋 Привет! Я — армейский ИИ-помощник для граждан Казахстана.\n\n"
@@ -221,6 +231,7 @@ def main():
     job_queue.run_daily(evening_post, time=time(hour=14, minute=0))  # 19:00 Астана
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("post", manual_post))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info(f"Бот запущен! CHANNEL_ID={CHANNEL_ID}")
